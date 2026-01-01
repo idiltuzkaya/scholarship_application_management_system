@@ -1,0 +1,306 @@
+import streamlit as st
+import pandas as pd
+import psycopg2
+import plotly.express as px
+
+# ==========================================
+# 1) DATABASE SETTINGS
+# ==========================================
+DB_HOST = "localhost"
+DB_NAME = "scholarship_management_system"
+DB_USER="idilbukretuzkaya"
+DB_PASSWORD = "1510"
+DB_PORT = "5432"
+
+
+def get_connection():
+    return psycopg2.connect(
+        host=DB_HOST,
+        database=DB_NAME,
+        user=DB_USER,
+        password=DB_PASSWORD,
+        port=DB_PORT
+    )
+
+
+# ==========================================
+# 2) PAGE CONFIG
+# ==========================================
+st.set_page_config(page_title="Scholarship System", layout="wide")
+st.title("Scholarship Application Management System")
+st.markdown("---")
+
+menu = [
+    "Dashboard (Analytics)",
+    "Student List",
+    "Add New Student",
+    "Delete Student",
+    "Scholarship Status",
+    "Scoreboard"
+]
+choice = st.sidebar.selectbox("Select Module", menu)
+
+
+# ==========================================
+# MODULE 1: DASHBOARD (ANALYTICS)
+# ==========================================
+if choice == "Dashboard (Analytics)":
+    st.header("Analytical Dashboard")
+
+    conn = get_connection()
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+        count_students = pd.read_sql("SELECT COUNT(*) FROM student", conn).iloc[0, 0]
+        st.metric("Total Students", int(count_students))
+
+    with col2:
+        count_apps = pd.read_sql("SELECT COUNT(*) FROM application", conn).iloc[0, 0]
+        st.metric("Total Applications", int(count_apps))
+
+    with col3:
+        avg_score = pd.read_sql("SELECT AVG(englishexamscore) FROM student", conn).iloc[0, 0]
+        st.metric("Avg English Score", round(avg_score, 1) if avg_score is not None else None)
+
+    st.subheader("1) Applications by Scholarship Type")
+    query1 = """
+    SELECT sch.name, COUNT(a.applicationid) AS basvuru_sayisi
+    FROM scholarship sch
+    JOIN application_scholarship ash ON sch.scholarshipid = ash.scholarshipid
+    JOIN application a ON ash.applicationid = a.applicationid
+    GROUP BY sch.name
+    ORDER BY basvuru_sayisi DESC;
+    """
+    df1 = pd.read_sql(query1, conn)
+    if df1.empty:
+        st.info("No data to display.")
+    else:
+        fig1 = px.bar(df1, x="name", y="basvuru_sayisi", color="name")
+        st.plotly_chart(fig1, use_container_width=True)
+
+    st.subheader("2) Application Outcomes")
+    query2 = """
+    SELECT outcome, COUNT(*) AS count
+    FROM application
+    GROUP BY outcome;
+    """
+    df2 = pd.read_sql(query2, conn)
+    if df2.empty:
+        st.info("No data to display.")
+    else:
+        fig2 = px.pie(df2, values="count", names="outcome", title="Acceptance vs Rejection")
+        st.plotly_chart(fig2, use_container_width=True)
+
+    conn.close()
+
+
+# ==========================================
+# MODULE 2: STUDENT LIST
+# ==========================================
+elif choice == "Student List":
+    st.header("Registered Students List")
+    conn = get_connection()
+
+    search_term = st.text_input("Search by Name:")
+
+    if search_term:
+        query = "SELECT * FROM student WHERE name ILIKE %s OR surname ILIKE %s ORDER BY studentid"
+        df = pd.read_sql(query, conn, params=[f"%{search_term}%", f"%{search_term}%"])
+    else:
+        query = "SELECT * FROM student ORDER BY studentid"
+        df = pd.read_sql(query, conn)
+
+    st.dataframe(df, use_container_width=True)
+    conn.close()
+
+
+# ==========================================
+# MODULE 3: ADD NEW STUDENT
+# ==========================================
+elif choice == "Add New Student":
+    st.header("Register New Student")
+
+    with st.form("student_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            name = st.text_input("First Name")
+            surname = st.text_input("Surname")
+            email = st.text_input("Email Address")
+            age = st.number_input("Age", min_value=17, max_value=100)
+
+        with col2:
+            income = st.number_input("Financial Income", min_value=0.0)
+            uni = st.selectbox(
+                "University",
+                ["ODTÜ", "Bilkent", "İTÜ", "Boğaziçi", "Koç", "Sabancı", "Hacettepe", "Diğer"]
+            )
+            ranking = st.number_input("Uni Ranking", min_value=1)
+            english = st.number_input("English Score", min_value=0.0, max_value=100.0)
+
+        submitted = st.form_submit_button("Save Student to Database")
+
+        if submitted:
+            if not name or not surname:
+                st.error("Name and Surname are required.")
+            else:
+                try:
+                    conn = get_connection()
+                    cur = conn.cursor()
+                    cur.execute(
+                        """
+                        INSERT INTO student
+                            (name, surname, email, age, financialincome, university, universityranking, englishexamscore)
+                        VALUES
+                            (%s, %s, %s, %s, %s, %s, %s, %s)
+                        """,
+                        (name, surname, email, age, income, uni, ranking, english),
+                    )
+                    conn.commit()
+                    cur.close()
+                    conn.close()
+                    st.success(f"Success! {name} {surname} has been added.")
+                except Exception as e:
+                    st.error(f"Hata oluştu: {e}")
+
+
+# ==========================================
+# MODULE 4: DELETE STUDENT
+# ==========================================
+elif choice == "Delete Student":
+    st.header("Delete Student")
+
+    conn = get_connection()
+
+    df_students = pd.read_sql(
+        "SELECT studentid, name, surname, email FROM student ORDER BY studentid",
+        conn
+    )
+
+    if df_students.empty:
+        st.info("No students found.")
+        conn.close()
+    else:
+        df_students["label"] = (
+            df_students["studentid"].astype(str)
+            + " - "
+            + df_students["name"].fillna("")
+            + " "
+            + df_students["surname"].fillna("")
+            + " ("
+            + df_students["email"].fillna("no-email")
+            + ")"
+        )
+
+        selected_label = st.selectbox("Select a student to delete:", df_students["label"].tolist())
+        selected_id = int(selected_label.split(" - ")[0])
+
+        st.warning("This action is permanent. Make sure you selected the correct student.")
+
+        confirm = st.checkbox("I understand and want to delete this student.")
+        if st.button("Delete Student", disabled=not confirm):
+            try:
+                cur = conn.cursor()
+                cur.execute("DELETE FROM student WHERE studentid = %s", (selected_id,))
+                conn.commit()
+
+                if cur.rowcount == 0:
+                    st.error("Student not found (nothing deleted).")
+                else:
+                    st.success(f"Student (ID: {selected_id}) deleted.")
+
+                cur.close()
+            except Exception as e:
+                conn.rollback()
+                st.error(f"Delete failed: {e}")
+
+        st.subheader("Current Students")
+        st.dataframe(df_students.drop(columns=["label"]), use_container_width=True)
+
+        conn.close()
+
+
+# ==========================================
+# MODULE 5: SCHOLARSHIP STATUS OVERVIEW
+# ==========================================
+elif choice == "Scholarship Status":
+    st.header("Scholarship Status Overview")
+    conn = get_connection()
+
+    query = """
+    SELECT
+        (st.name || ' ' || st.surname) AS student_name,
+        sch.name AS scholarship,
+        a.outcome,
+        a.score,
+        a.status
+    FROM application a
+    JOIN student st ON a.studentid = st.studentid
+    JOIN application_scholarship ash ON a.applicationid = ash.applicationid
+    JOIN scholarship sch ON ash.scholarshipid = sch.scholarshipid
+    ORDER BY a.score DESC NULLS LAST, student_name, scholarship;
+    """
+    df = pd.read_sql(query, conn)
+
+    def color_outcome(val):
+        color = "green" if val == "Accepted" else "red" if val == "Rejected" else "orange"
+        return f"color: {color}"
+
+    if df.empty:
+        st.info("No scholarship/application records found.")
+    else:
+        st.dataframe(df.style.applymap(color_outcome, subset=["outcome"]), use_container_width=True)
+
+    conn.close()
+
+
+# ==========================================
+# MODULE 6: SCOREBOARD (SHOW SCORES CLEARLY)
+# ==========================================
+elif choice == "Scoreboard":
+    st.header("Scoreboard (Eligible applicants first)")
+
+    conn = get_connection()
+
+    query = """
+    SELECT
+        a.applicationid,
+        s.studentid,
+        (s.name || ' ' || s.surname) AS student_name,
+        s.age,
+        s.financialincome,
+        s.university,
+        s.universityranking,
+        s.englishexamscore,
+        a.status,
+        a.score,
+        a.outcome
+    FROM application a
+    JOIN student s ON a.studentid = s.studentid
+    ORDER BY
+        (a.status = 'ELIGIBLE') DESC,
+        a.score DESC NULLS LAST,
+        a.applicationid;
+    """
+    df = pd.read_sql(query, conn)
+
+    if df.empty:
+        st.info("No applications found.")
+        conn.close()
+    else:
+        st.dataframe(df, use_container_width=True)
+
+        eligible_df = df[df["status"] == "ELIGIBLE"].copy()
+        if not eligible_df.empty:
+            st.subheader("Score Distribution (Eligible Only)")
+            fig = px.histogram(eligible_df, x="score", nbins=20)
+            st.plotly_chart(fig, use_container_width=True)
+
+        conn.close()
+
+
+#streamlit run /Users/idilbukretuzkaya/Desktop/app/app.py
+
+
+
+#
