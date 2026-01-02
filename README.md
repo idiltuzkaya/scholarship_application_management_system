@@ -66,12 +66,18 @@ queries.sql
 
 
 
+## Graphical User Interface (GUI)
 
-Python Component
+In addition to the database design and SQL implementation, this project includes a graphical user interface (GUI) to interact with the system more intuitively.
 
-A Python-based graphical user interface (GUI) is used to interact with the database and visualize application and review information.
-The implementation is located in the python/ directory and connects directly to the SQL database to retrieve and display results.
+The GUI allows users to:
+- Execute predefined SQL queries
+- View query results in a structured and readable format
+- Interact with the database without directly writing SQL commands
 
+The GUI is implemented as a separate module under the `GUI/` directory and communicates with the database using the defined schema and seed data provided in this repository.
+
+This component demonstrates how the designed database can be integrated into a user-facing application, supporting practical usage scenarios beyond raw SQL execution.
 
 How to Run the Project
 	1.	Create an empty PostgreSQL database.
